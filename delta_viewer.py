@@ -105,6 +105,66 @@ class S3Handler:
             logger.error(f"Error getting object {key}: {e}")
             raise
 
+    def delete_object(self, key: str) -> bool:
+        """Delete an object from S3."""
+        try:
+            self.s3_client.delete_object(Bucket=self.bucket_name, Key=key)
+            logger.info(f"Deleted object: {key}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting object {key}: {e}")
+            raise
+
+    def delete_folder(self, prefix: str) -> int:
+        """Delete all objects with the given prefix (folder)."""
+        try:
+            # List all objects with the prefix
+            response = self.s3_client.list_objects_v2(
+                Bucket=self.bucket_name,
+                Prefix=prefix
+            )
+            
+            if 'Contents' not in response:
+                return 0
+            
+            # Delete all objects
+            objects_to_delete = [{'Key': obj['Key']} for obj in response['Contents']]
+            
+            if objects_to_delete:
+                self.s3_client.delete_objects(
+                    Bucket=self.bucket_name,
+                    Delete={'Objects': objects_to_delete}
+                )
+                
+            deleted_count = len(objects_to_delete)
+            logger.info(f"Deleted {deleted_count} objects with prefix: {prefix}")
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"Error deleting folder {prefix}: {e}")
+            raise
+
+    def create_folder(self, folder_path: str) -> bool:
+        """Create a folder by creating an empty object with trailing slash."""
+        try:
+            # Ensure folder path ends with /
+            if not folder_path.endswith('/'):
+                folder_path += '/'
+            
+            # Create empty object to represent folder
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=folder_path,
+                Body=b''
+            )
+            
+            logger.info(f"Created folder: {folder_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error creating folder {folder_path}: {e}")
+            raise
+
 # File Viewers
 class FileViewers:
     @staticmethod
@@ -601,6 +661,20 @@ HTML_TEMPLATE = '''
         .delta-btn:hover {{ background: #047857; }}
         .metadata {{ background: #f8fafc; padding: 15px; border-radius: 6px; margin-top: 20px; }}
         .metadata pre {{ margin: 0; font-size: 12px; overflow-x: auto; }}
+        .management-controls {{ padding: 15px 20px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; }}
+        .btn {{ padding: 8px 16px; margin: 0 5px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }}
+        .btn-primary {{ background: #2563eb; color: white; }}
+        .btn-primary:hover {{ background: #1d4ed8; }}
+        .btn-danger {{ background: #dc2626; color: white; }}
+        .btn-danger:hover {{ background: #b91c1c; }}
+        .btn-success {{ background: #059669; color: white; }}
+        .btn-success:hover {{ background: #047857; }}
+        .btn-secondary {{ background: #6b7280; color: white; }}
+        .btn-secondary:hover {{ background: #4b5563; }}
+        .file-actions {{ margin-left: auto; display: flex; gap: 5px; }}
+        .create-folder-form {{ display: none; padding: 10px; background: #eff6ff; border-radius: 6px; margin-top: 10px; }}
+        .create-folder-form input {{ padding: 8px; margin: 0 5px; border: 1px solid #d1d5db; border-radius: 4px; }}
+        .hidden {{ display: none; }}
     </style>
 </head>
 <body>
@@ -615,6 +689,15 @@ HTML_TEMPLATE = '''
             {delta_button}
         </div>
         
+        <div class="management-controls">
+            <button class="btn btn-success" onclick="toggleCreateFolder()">📁 Create Folder</button>
+            <div id="create-folder-form" class="create-folder-form">
+                <input type="text" id="folder-name" placeholder="Folder name" />
+                <button class="btn btn-primary" onclick="createFolder()">Create</button>
+                <button class="btn btn-secondary" onclick="toggleCreateFolder()">Cancel</button>
+            </div>
+        </div>
+        
         <div class="content">
             {error_html}
             {info_html}
@@ -625,6 +708,65 @@ HTML_TEMPLATE = '''
     <script>
         function viewDeltaTable(path) {{
             window.location.href = '/delta?path=' + encodeURIComponent(path);
+        }}
+        
+        function toggleCreateFolder() {{
+            const form = document.getElementById('create-folder-form');
+            const isVisible = form.style.display !== 'none';
+            form.style.display = isVisible ? 'none' : 'block';
+            if (!isVisible) {{
+                document.getElementById('folder-name').focus();
+            }}
+        }}
+        
+        async function createFolder() {{
+            const folderName = document.getElementById('folder-name').value.trim();
+            if (!folderName) {{
+                alert('Please enter a folder name');
+                return;
+            }}
+            
+            const currentPath = new URLSearchParams(window.location.search).get('path') || '';
+            
+            try {{
+                const response = await fetch(`/create-folder?path=${{encodeURIComponent(currentPath)}}&name=${{encodeURIComponent(folderName)}}`, {{
+                    method: 'POST'
+                }});
+                
+                const result = await response.json();
+                
+                if (result.success) {{
+                    alert(result.message);
+                    window.location.reload();
+                }} else {{
+                    alert('Error: ' + result.error);
+                }}
+            }} catch (error) {{
+                alert('Error creating folder: ' + error.message);
+            }}
+        }}
+        
+        async function deleteItem(path, type, name) {{
+            if (!confirm(`Are you sure you want to delete this ${{type}}: ${{name}}?`)) {{
+                return;
+            }}
+            
+            try {{
+                const response = await fetch(`/delete?path=${{encodeURIComponent(path)}}&type=${{type}}`, {{
+                    method: 'DELETE'
+                }});
+                
+                const result = await response.json();
+                
+                if (result.success) {{
+                    alert(result.message);
+                    window.location.reload();
+                }} else {{
+                    alert('Error: ' + result.error);
+                }}
+            }} catch (error) {{
+                alert('Error deleting ' + type + ': ' + error.message);
+            }}
         }}
     </script>
 </body>
@@ -679,6 +821,9 @@ async def index(path: str = Query("")):
                         <div class="file-name">
                             <a href="/?path={quote(item['path'])}">{item['name']}/</a>
                         </div>
+                        <div class="file-actions">
+                            <button class="btn btn-danger" onclick="deleteItem('{item['path']}', 'folder', '{item['name']}')" title="Delete folder">🗑️</button>
+                        </div>
                     </li>'''
                 else:
                     # Show different icons for different file types
@@ -699,6 +844,9 @@ async def index(path: str = Query("")):
                         </div>
                         <div class="file-meta">
                             {size_kb:.2f} KB | {item['modified'][:10]}
+                        </div>
+                        <div class="file-actions">
+                            <button class="btn btn-danger" onclick="deleteItem('{item['path']}', 'file', '{item['name']}')" title="Delete file">🗑️</button>
                         </div>
                     </li>'''
             content_html += '</ul>'
@@ -946,6 +1094,46 @@ async def view_delta(path: str = Query("")):
             'content_html': ''
         }
         return templates.render(HTML_TEMPLATE, **template_vars)
+
+@app.delete("/delete")
+async def delete_item(path: str = Query(...), type: str = Query(...)):
+    """Delete a file or folder."""
+    try:
+        if type == "file":
+            s3_handler.delete_object(path)
+            return JSONResponse({'success': True, 'message': f'File {path} deleted successfully'})
+        elif type == "folder":
+            # Ensure folder path ends with /
+            folder_path = path if path.endswith('/') else path + '/'
+            deleted_count = s3_handler.delete_folder(folder_path)
+            return JSONResponse({
+                'success': True, 
+                'message': f'Folder {path} deleted successfully ({deleted_count} items)'
+            })
+        else:
+            raise HTTPException(status_code=400, detail="Type must be 'file' or 'folder'")
+    except Exception as e:
+        logger.error(f"Error deleting {type} {path}: {e}")
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+@app.post("/create-folder")
+async def create_folder(path: str = Query(...), name: str = Query(...)):
+    """Create a new folder."""
+    try:
+        # Build full folder path
+        if path and not path.endswith('/'):
+            path += '/'
+        folder_path = f"{path}{name}/"
+        
+        s3_handler.create_folder(folder_path)
+        return JSONResponse({
+            'success': True, 
+            'message': f'Folder {name} created successfully',
+            'path': folder_path
+        })
+    except Exception as e:
+        logger.error(f"Error creating folder {name} at {path}: {e}")
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
 
 @app.get("/health")
 async def health_check():

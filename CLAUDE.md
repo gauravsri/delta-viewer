@@ -52,8 +52,9 @@ Single-file FastAPI application with these components:
 - Smart XML handling: structured XML as tables, mixed/simple XML as formatted text
 - Raw file viewing: text files with content type detection, binary files as hex dumps
 - Delta table viewing with metadata display
+- File management: create folders, delete files/folders with confirmation
 - Visual file type indicators (📊 data, 📝 text, 🔍 other)
-- Responsive web interface with breadcrumb navigation
+- Responsive web interface with breadcrumb navigation and management controls
 - Health check endpoint for monitoring
 - Automatic FastAPI documentation at `/docs`
 - Async performance improvements

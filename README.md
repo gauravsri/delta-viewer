@@ -17,6 +17,8 @@ A minimal SRE tool for browsing S3/MinIO storage and viewing data files with Del
 - 📝 View text files and code with syntax detection
 - 🔍 View any file type as raw content (text or hex dump)
 - 🔺 View folders as Delta tables
+- ➕ Create new folders
+- 🗑️ Delete files and folders (with confirmation)
 - 🔍 Preview first 1000 rows (configurable)
 - 🏥 Health check endpoint at `/health`
 - 🚀 FastAPI with async performance
@@ -87,9 +89,17 @@ uvicorn delta_viewer:app --host 0.0.0.0 --port 5000 --reload
 5. **Text files**: View logs, code, configuration files with automatic content type detection
 6. **Unknown files**: Any file can be viewed as raw text or binary hex dump
 7. **Delta tables**: Use "View as Delta Table" button to read Delta Lake tables
-8. **Health check**: Visit `/health` to verify S3/MinIO connectivity
+8. **File management**:
+   - Create folders: Click "📁 Create Folder" button
+   - Delete files/folders: Click 🗑️ button (with confirmation dialog)
+9. **Health check**: Visit `/health` to verify S3/MinIO connectivity
 
 ### File Type Icons
 - 📊 Data files (CSV, Parquet, Avro, JSON, XML)
 - 📝 Text files (TXT, LOG, MD, code files)
 - 🔍 Other viewable files
+
+### Management Controls
+- **Create Folder**: Button in the management bar to create new folders
+- **Delete Items**: 🗑️ buttons next to each file/folder for deletion
+- **Confirmations**: All delete operations require confirmation
