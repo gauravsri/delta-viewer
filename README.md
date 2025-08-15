@@ -13,7 +13,7 @@ A minimal SRE tool for browsing S3/MinIO storage and viewing data files with Del
 ## Features
 
 - 📁 Browse S3/MinIO folders like a file system
-- 📊 View CSV, Parquet, and Avro files
+- 📊 View CSV, Parquet, Avro, JSON, and XML files
 - 🔺 View folders as Delta tables
 - 🔍 Preview first 1000 rows (configurable)
 - 🏥 Health check endpoint at `/health`
@@ -22,15 +22,42 @@ A minimal SRE tool for browsing S3/MinIO storage and viewing data files with Del
 
 ## Configuration
 
+### AWS S3 Configuration
 Set these environment variables in `.env`:
 
-```
+```bash
 AWS_ACCESS_KEY_ID=your_access_key
 AWS_SECRET_ACCESS_KEY=your_secret_key
-S3_BUCKET_NAME=your-bucket
-S3_ENDPOINT_URL=http://localhost:9000  # For MinIO
+S3_BUCKET_NAME=your-bucket-name
 AWS_REGION=us-east-1
 MAX_PREVIEW_ROWS=1000
+# Leave S3_ENDPOINT_URL empty for AWS S3
+```
+
+### MinIO Configuration
+For MinIO (local S3-compatible storage):
+
+```bash
+AWS_ACCESS_KEY_ID=minioadmin
+AWS_SECRET_ACCESS_KEY=minioadmin
+S3_BUCKET_NAME=your-bucket-name
+S3_ENDPOINT_URL=http://localhost:9000
+AWS_REGION=us-east-1
+MAX_PREVIEW_ROWS=1000
+```
+
+### MinIO Setup
+To run MinIO locally:
+
+```bash
+# Using Docker
+docker run -p 9000:9000 -p 9001:9001 \
+  -e MINIO_ROOT_USER=minioadmin \
+  -e MINIO_ROOT_PASSWORD=minioadmin \
+  minio/minio server /data --console-address ":9001"
+
+# Access MinIO Console at http://localhost:9001
+# API endpoint: http://localhost:9000
 ```
 
 ## Running
@@ -42,3 +69,18 @@ python delta_viewer.py
 # With uvicorn for development
 uvicorn delta_viewer:app --host 0.0.0.0 --port 5000 --reload
 ```
+
+## Usage Examples
+
+1. **Browse folders**: Navigate through S3/MinIO buckets like a file system
+2. **View data files**: Click on CSV, Parquet, Avro, JSON, or XML files to preview data
+3. **JSON handling**: 
+   - JSON arrays of objects → displayed as tables
+   - JSON objects → displayed as key-value pairs
+   - Other JSON → displayed as formatted text
+4. **XML handling**:
+   - Structured XML (repeated elements) → displayed as tables
+   - Mixed/simple XML → displayed as formatted text
+   - Attributes prefixed with `@`, text content as `_text`
+5. **Delta tables**: Use "View as Delta Table" button to read Delta Lake tables
+6. **Health check**: Visit `/health` to verify S3/MinIO connectivity

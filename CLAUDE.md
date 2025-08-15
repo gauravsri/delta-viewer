@@ -47,7 +47,9 @@ Single-file FastAPI application with these components:
 ## Key Features
 
 - File system-like browsing of S3/MinIO buckets
-- Preview data files with automatic format detection
+- Preview data files with automatic format detection (CSV, Parquet, Avro, JSON, XML)
+- Smart JSON handling: arrays as tables, objects as key-value pairs
+- Smart XML handling: structured XML as tables, mixed/simple XML as formatted text
 - Delta table viewing with metadata display
 - Responsive web interface with breadcrumb navigation
 - Health check endpoint for monitoring

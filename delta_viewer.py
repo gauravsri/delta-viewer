@@ -7,6 +7,7 @@ A minimal SRE tool for browsing cloud storage and viewing data files.
 import os
 import json
 import logging
+import xml.etree.ElementTree as ET
 from typing import Dict, List, Any
 from urllib.parse import quote
 from io import BytesIO
@@ -182,6 +183,204 @@ class FileViewers:
             }
         except Exception as e:
             return {'type': 'error', 'message': f"Error reading Avro: {e}"}
+
+    @staticmethod
+    def view_json(content: bytes, max_rows: int = 1000) -> Dict[str, Any]:
+        """View JSON file content."""
+        try:
+            content_str = content.decode('utf-8')
+            data = json.loads(content_str)
+            
+            # Handle different JSON structures
+            if isinstance(data, list):
+                # JSON array - treat as table if objects have consistent structure
+                if data and isinstance(data[0], dict):
+                    # Get all unique columns from all objects
+                    all_columns = set()
+                    for item in data:
+                        if isinstance(item, dict):
+                            all_columns.update(item.keys())
+                    
+                    columns = sorted(list(all_columns))
+                    
+                    # Limit rows
+                    display_data = data[:max_rows] if len(data) > max_rows else data
+                    truncated = len(data) > max_rows
+                    
+                    # Ensure all rows have all columns
+                    normalized_data = []
+                    for item in display_data:
+                        if isinstance(item, dict):
+                            normalized_row = {col: item.get(col, '') for col in columns}
+                            normalized_data.append(normalized_row)
+                    
+                    return {
+                        'type': 'table',
+                        'data': normalized_data,
+                        'columns': columns,
+                        'total_rows': len(display_data),
+                        'truncated': truncated,
+                        'max_rows': max_rows,
+                        'raw_json': json.dumps(data[:100] if len(data) > 100 else data, indent=2)  # Show first 100 items as raw
+                    }
+                else:
+                    # JSON array of primitives or mixed types
+                    return {
+                        'type': 'json_raw',
+                        'content': json.dumps(data, indent=2),
+                        'size': len(data) if isinstance(data, list) else 1
+                    }
+            elif isinstance(data, dict):
+                # Single JSON object - show as key-value pairs
+                items = list(data.items())
+                display_items = items[:max_rows] if len(items) > max_rows else items
+                truncated = len(items) > max_rows
+                
+                table_data = [{'key': k, 'value': json.dumps(v) if isinstance(v, (dict, list)) else str(v)} 
+                             for k, v in display_items]
+                
+                return {
+                    'type': 'table',
+                    'data': table_data,
+                    'columns': ['key', 'value'],
+                    'total_rows': len(display_items),
+                    'truncated': truncated,
+                    'max_rows': max_rows,
+                    'raw_json': json.dumps(data, indent=2)
+                }
+            else:
+                # Primitive JSON value
+                return {
+                    'type': 'json_raw',
+                    'content': json.dumps(data, indent=2),
+                    'size': 1
+                }
+                
+        except json.JSONDecodeError as e:
+            return {'type': 'error', 'message': f"Invalid JSON format: {e}"}
+        except UnicodeDecodeError as e:
+            return {'type': 'error', 'message': f"Unable to decode file as UTF-8: {e}"}
+        except Exception as e:
+            return {'type': 'error', 'message': f"Error reading JSON: {e}"}
+
+    @staticmethod
+    def view_xml(content: bytes, max_rows: int = 1000) -> Dict[str, Any]:
+        """View XML file content."""
+        try:
+            content_str = content.decode('utf-8')
+            root = ET.fromstring(content_str)
+            
+            # Try to detect if XML is structured data (like a list of records)
+            children = list(root)
+            
+            if children and len(children) > 0:
+                # Check if all children have the same tag (indicating a list of similar records)
+                first_child_tag = children[0].tag
+                if all(child.tag == first_child_tag for child in children[:10]):  # Check first 10 for performance
+                    # This looks like structured data - convert to table
+                    records = []
+                    all_columns = set()
+                    
+                    # Collect all possible columns from first few records
+                    sample_size = min(50, len(children))
+                    for child in children[:sample_size]:
+                        record = {}
+                        # Handle attributes
+                        for attr, value in child.attrib.items():
+                            attr_key = f"@{attr}"
+                            record[attr_key] = value
+                            all_columns.add(attr_key)
+                        
+                        # Handle child elements and text content
+                        if child.text and child.text.strip():
+                            record['_text'] = child.text.strip()
+                            all_columns.add('_text')
+                        
+                        for sub_elem in child:
+                            if sub_elem.text and sub_elem.text.strip():
+                                record[sub_elem.tag] = sub_elem.text.strip()
+                                all_columns.add(sub_elem.tag)
+                            # Include attributes of sub-elements
+                            for attr, value in sub_elem.attrib.items():
+                                attr_key = f"{sub_elem.tag}@{attr}"
+                                record[attr_key] = value
+                                all_columns.add(attr_key)
+                    
+                    columns = sorted(list(all_columns))
+                    
+                    # Process records up to max_rows
+                    display_children = children[:max_rows] if len(children) > max_rows else children
+                    truncated = len(children) > max_rows
+                    
+                    for child in display_children:
+                        record = {col: '' for col in columns}  # Initialize with empty values
+                        
+                        # Handle attributes
+                        for attr, value in child.attrib.items():
+                            attr_key = f"@{attr}"
+                            if attr_key in record:
+                                record[attr_key] = value
+                        
+                        # Handle text content
+                        if child.text and child.text.strip():
+                            if '_text' in record:
+                                record['_text'] = child.text.strip()
+                        
+                        # Handle child elements
+                        for sub_elem in child:
+                            if sub_elem.text and sub_elem.text.strip():
+                                if sub_elem.tag in record:
+                                    record[sub_elem.tag] = sub_elem.text.strip()
+                            # Include attributes of sub-elements
+                            for attr, value in sub_elem.attrib.items():
+                                attr_key = f"{sub_elem.tag}@{attr}"
+                                if attr_key in record:
+                                    record[attr_key] = value
+                        
+                        records.append(record)
+                    
+                    return {
+                        'type': 'table',
+                        'data': records,
+                        'columns': columns,
+                        'total_rows': len(records),
+                        'truncated': truncated,
+                        'max_rows': max_rows,
+                        'xml_info': {
+                            'root_tag': root.tag,
+                            'total_elements': len(children),
+                            'element_type': first_child_tag
+                        }
+                    }
+                else:
+                    # Mixed structure - show as formatted XML
+                    return {
+                        'type': 'xml_raw',
+                        'content': content_str,
+                        'xml_info': {
+                            'root_tag': root.tag,
+                            'child_count': len(children),
+                            'structure': 'mixed'
+                        }
+                    }
+            else:
+                # Simple XML or single element - show formatted
+                return {
+                    'type': 'xml_raw',
+                    'content': content_str,
+                    'xml_info': {
+                        'root_tag': root.tag,
+                        'has_text': bool(root.text and root.text.strip()),
+                        'structure': 'simple'
+                    }
+                }
+                
+        except ET.ParseError as e:
+            return {'type': 'error', 'message': f"Invalid XML format: {e}"}
+        except UnicodeDecodeError as e:
+            return {'type': 'error', 'message': f"Unable to decode file as UTF-8: {e}"}
+        except Exception as e:
+            return {'type': 'error', 'message': f"Error reading XML: {e}"}
 
     @staticmethod
     def view_delta_table(s3_path: str, max_rows: int = 1000) -> Dict[str, Any]:
@@ -416,7 +615,7 @@ async def index(path: str = Query("")):
                         </div>
                     </li>'''
                 else:
-                    data_icon = "📊" if item['name'].endswith(('.csv', '.parquet', '.avro')) else ""
+                    data_icon = "📊" if item['name'].endswith(('.csv', '.parquet', '.avro', '.json', '.xml')) else ""
                     size_kb = item['size'] / 1024
                     content_html += f'''
                     <li class="file-item">
@@ -460,6 +659,10 @@ async def view_file(file: str = Query("")):
             file_content = file_viewers.view_parquet(content, Config.MAX_PREVIEW_ROWS)
         elif file.lower().endswith('.avro'):
             file_content = file_viewers.view_avro(content, Config.MAX_PREVIEW_ROWS)
+        elif file.lower().endswith('.json'):
+            file_content = file_viewers.view_json(content, Config.MAX_PREVIEW_ROWS)
+        elif file.lower().endswith('.xml'):
+            file_content = file_viewers.view_xml(content, Config.MAX_PREVIEW_ROWS)
         else:
             file_content = {'type': 'error', 'message': 'Unsupported file type'}
         
@@ -492,6 +695,29 @@ async def view_file(file: str = Query("")):
         # Handle file content
         if file_content['type'] == 'error':
             template_vars['error_html'] = f'<div class="error">{file_content["message"]}</div>'
+        elif file_content['type'] == 'json_raw':
+            # Show raw JSON content
+            template_vars['content_html'] = f'''
+            <div class="info">JSON content ({file_content.get("size", 1)} items)</div>
+            <div class="metadata">
+                <h3>JSON Content</h3>
+                <pre>{file_content["content"]}</pre>
+            </div>'''
+        elif file_content['type'] == 'xml_raw':
+            # Show raw XML content
+            xml_info = file_content.get('xml_info', {})
+            info_text = f"XML document (root: {xml_info.get('root_tag', 'unknown')})"
+            if 'child_count' in xml_info:
+                info_text += f", {xml_info['child_count']} children"
+            if 'structure' in xml_info:
+                info_text += f", {xml_info['structure']} structure"
+            
+            template_vars['content_html'] = f'''
+            <div class="info">{info_text}</div>
+            <div class="metadata">
+                <h3>XML Content</h3>
+                <pre>{file_content["content"]}</pre>
+            </div>'''
         elif file_content['type'] in ['table', 'delta_table']:
             if file_content.get('truncated'):
                 template_vars['info_html'] = f'<div class="info">Showing first {file_content["max_rows"]} rows of {file_content["total_rows"]} total rows.</div>'
@@ -511,12 +737,16 @@ async def view_file(file: str = Query("")):
             table_html += '</tbody></table></div>'
             
             # Add metadata if present
-            if file_content.get('schema') or file_content.get('metadata'):
+            if file_content.get('schema') or file_content.get('metadata') or file_content.get('raw_json') or file_content.get('xml_info'):
                 table_html += '<div class="metadata">'
                 if file_content.get('metadata'):
                     table_html += f'<h3>Delta Table Metadata</h3><pre>{json.dumps(file_content["metadata"], indent=2)}</pre>'
                 if file_content.get('schema'):
                     table_html += f'<h3>Schema</h3><pre>{file_content["schema"]}</pre>'
+                if file_content.get('raw_json'):
+                    table_html += f'<h3>Raw JSON (sample)</h3><pre>{file_content["raw_json"]}</pre>'
+                if file_content.get('xml_info'):
+                    table_html += f'<h3>XML Structure Info</h3><pre>{json.dumps(file_content["xml_info"], indent=2)}</pre>'
                 table_html += '</div>'
             
             template_vars['content_html'] = table_html
