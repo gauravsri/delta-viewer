@@ -383,6 +383,71 @@ class FileViewers:
             return {'type': 'error', 'message': f"Error reading XML: {e}"}
 
     @staticmethod
+    def view_raw(content: bytes, file_path: str, max_bytes: int = 50000) -> Dict[str, Any]:
+        """View raw file content for unknown file types."""
+        try:
+            file_size = len(content)
+            file_name = file_path.split('/')[-1]
+            file_ext = file_name.split('.')[-1].lower() if '.' in file_name else 'unknown'
+            
+            # Truncate content if too large
+            display_content = content[:max_bytes] if len(content) > max_bytes else content
+            truncated = len(content) > max_bytes
+            
+            # Try to decode as text first
+            try:
+                text_content = display_content.decode('utf-8')
+                content_type = 'text'
+                # Check for common text file patterns
+                if any(keyword in text_content.lower() for keyword in ['<html', '<?xml', 'def ', 'class ', 'import ', 'function']):
+                    if '<html' in text_content.lower():
+                        content_type = 'html'
+                    elif '<?xml' in text_content.lower():
+                        content_type = 'xml'
+                    elif any(keyword in text_content for keyword in ['def ', 'import ', 'class ']):
+                        content_type = 'code'
+                    else:
+                        content_type = 'text'
+                
+                return {
+                    'type': 'raw_text',
+                    'content': text_content,
+                    'file_info': {
+                        'name': file_name,
+                        'extension': file_ext,
+                        'size_bytes': file_size,
+                        'content_type': content_type,
+                        'truncated': truncated,
+                        'max_bytes': max_bytes
+                    }
+                }
+            except UnicodeDecodeError:
+                # Binary content - show hex dump
+                hex_lines = []
+                for i in range(0, min(len(display_content), 1024), 16):  # Show first 1KB as hex
+                    chunk = display_content[i:i+16]
+                    hex_part = ' '.join(f'{b:02x}' for b in chunk)
+                    ascii_part = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in chunk)
+                    hex_lines.append(f'{i:08x}  {hex_part:<48} |{ascii_part}|')
+                
+                return {
+                    'type': 'raw_binary',
+                    'content': '\n'.join(hex_lines),
+                    'file_info': {
+                        'name': file_name,
+                        'extension': file_ext,
+                        'size_bytes': file_size,
+                        'content_type': 'binary',
+                        'truncated': truncated,
+                        'max_bytes': max_bytes,
+                        'hex_preview_bytes': min(len(display_content), 1024)
+                    }
+                }
+                
+        except Exception as e:
+            return {'type': 'error', 'message': f"Error reading file: {e}"}
+
+    @staticmethod
     def view_delta_table(s3_path: str, max_rows: int = 1000) -> Dict[str, Any]:
         """View Delta table content."""
         try:
@@ -615,14 +680,21 @@ async def index(path: str = Query("")):
                         </div>
                     </li>'''
                 else:
-                    data_icon = "📊" if item['name'].endswith(('.csv', '.parquet', '.avro', '.json', '.xml')) else ""
+                    # Show different icons for different file types
+                    if item['name'].endswith(('.csv', '.parquet', '.avro', '.json', '.xml')):
+                        data_icon = "📊"  # Data file icon
+                    elif item['name'].endswith(('.txt', '.log', '.md', '.py', '.js', '.html', '.css', '.sql', '.yaml', '.yml')):
+                        data_icon = "📝"  # Text file icon
+                    else:
+                        data_icon = "🔍"  # Unknown/viewable file icon
+                    
                     size_kb = item['size'] / 1024
                     content_html += f'''
                     <li class="file-item">
                         <span class="file-icon">{icon}</span>
                         <div class="file-name">
                             <a href="/view?file={quote(item['path'])}">{item['name']}</a>
-                            {f'<span style="margin-left: 10px; color: #059669;">{data_icon}</span>' if data_icon else ''}
+                            <span style="margin-left: 10px; color: #059669;">{data_icon}</span>
                         </div>
                         <div class="file-meta">
                             {size_kb:.2f} KB | {item['modified'][:10]}
@@ -664,7 +736,8 @@ async def view_file(file: str = Query("")):
         elif file.lower().endswith('.xml'):
             file_content = file_viewers.view_xml(content, Config.MAX_PREVIEW_ROWS)
         else:
-            file_content = {'type': 'error', 'message': 'Unsupported file type'}
+            # For unknown file types, show raw content
+            file_content = file_viewers.view_raw(content, file)
         
         # Build breadcrumbs for file view
         breadcrumbs = []
@@ -717,6 +790,36 @@ async def view_file(file: str = Query("")):
             <div class="metadata">
                 <h3>XML Content</h3>
                 <pre>{file_content["content"]}</pre>
+            </div>'''
+        elif file_content['type'] == 'raw_text':
+            # Show raw text content
+            file_info = file_content.get('file_info', {})
+            info_text = f"Text file ({file_info.get('content_type', 'text')})"
+            if file_info.get('size_bytes'):
+                size_kb = file_info['size_bytes'] / 1024
+                info_text += f" - {size_kb:.1f} KB"
+            if file_info.get('truncated'):
+                info_text += f" (showing first {file_info.get('max_bytes', 50000)} bytes)"
+            
+            template_vars['content_html'] = f'''
+            <div class="info">{info_text}</div>
+            <div class="metadata">
+                <h3>File Content</h3>
+                <pre style="white-space: pre-wrap; word-wrap: break-word;">{file_content["content"]}</pre>
+            </div>'''
+        elif file_content['type'] == 'raw_binary':
+            # Show binary content as hex dump
+            file_info = file_content.get('file_info', {})
+            size_kb = file_info.get('size_bytes', 0) / 1024
+            info_text = f"Binary file ({file_info.get('extension', 'unknown')} format) - {size_kb:.1f} KB"
+            if file_info.get('truncated'):
+                info_text += f" (showing hex dump of first {file_info.get('hex_preview_bytes', 1024)} bytes)"
+            
+            template_vars['content_html'] = f'''
+            <div class="info">{info_text}</div>
+            <div class="metadata">
+                <h3>Hex Dump</h3>
+                <pre style="font-family: 'Courier New', monospace; font-size: 12px;">{file_content["content"]}</pre>
             </div>'''
         elif file_content['type'] in ['table', 'delta_table']:
             if file_content.get('truncated'):

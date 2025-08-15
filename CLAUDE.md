@@ -50,7 +50,9 @@ Single-file FastAPI application with these components:
 - Preview data files with automatic format detection (CSV, Parquet, Avro, JSON, XML)
 - Smart JSON handling: arrays as tables, objects as key-value pairs
 - Smart XML handling: structured XML as tables, mixed/simple XML as formatted text
+- Raw file viewing: text files with content type detection, binary files as hex dumps
 - Delta table viewing with metadata display
+- Visual file type indicators (📊 data, 📝 text, 🔍 other)
 - Responsive web interface with breadcrumb navigation
 - Health check endpoint for monitoring
 - Automatic FastAPI documentation at `/docs`

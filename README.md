@@ -14,6 +14,8 @@ A minimal SRE tool for browsing S3/MinIO storage and viewing data files with Del
 
 - 📁 Browse S3/MinIO folders like a file system
 - 📊 View CSV, Parquet, Avro, JSON, and XML files
+- 📝 View text files and code with syntax detection
+- 🔍 View any file type as raw content (text or hex dump)
 - 🔺 View folders as Delta tables
 - 🔍 Preview first 1000 rows (configurable)
 - 🏥 Health check endpoint at `/health`
@@ -82,5 +84,12 @@ uvicorn delta_viewer:app --host 0.0.0.0 --port 5000 --reload
    - Structured XML (repeated elements) → displayed as tables
    - Mixed/simple XML → displayed as formatted text
    - Attributes prefixed with `@`, text content as `_text`
-5. **Delta tables**: Use "View as Delta Table" button to read Delta Lake tables
-6. **Health check**: Visit `/health` to verify S3/MinIO connectivity
+5. **Text files**: View logs, code, configuration files with automatic content type detection
+6. **Unknown files**: Any file can be viewed as raw text or binary hex dump
+7. **Delta tables**: Use "View as Delta Table" button to read Delta Lake tables
+8. **Health check**: Visit `/health` to verify S3/MinIO connectivity
+
+### File Type Icons
+- 📊 Data files (CSV, Parquet, Avro, JSON, XML)
+- 📝 Text files (TXT, LOG, MD, code files)
+- 🔍 Other viewable files
