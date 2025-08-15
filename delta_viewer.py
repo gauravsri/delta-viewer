@@ -7,6 +7,7 @@ A minimal SRE tool for browsing cloud storage and viewing data files.
 import os
 import json
 import logging
+import html
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Any
 from urllib.parse import quote
@@ -770,11 +771,12 @@ async def view_file(file: str = Query("")):
             template_vars['error_html'] = f'<div class="error">{file_content["message"]}</div>'
         elif file_content['type'] == 'json_raw':
             # Show raw JSON content
+            escaped_content = html.escape(file_content["content"])
             template_vars['content_html'] = f'''
             <div class="info">JSON content ({file_content.get("size", 1)} items)</div>
             <div class="metadata">
                 <h3>JSON Content</h3>
-                <pre>{file_content["content"]}</pre>
+                <pre>{escaped_content}</pre>
             </div>'''
         elif file_content['type'] == 'xml_raw':
             # Show raw XML content
@@ -785,11 +787,12 @@ async def view_file(file: str = Query("")):
             if 'structure' in xml_info:
                 info_text += f", {xml_info['structure']} structure"
             
+            escaped_content = html.escape(file_content["content"])
             template_vars['content_html'] = f'''
             <div class="info">{info_text}</div>
             <div class="metadata">
                 <h3>XML Content</h3>
-                <pre>{file_content["content"]}</pre>
+                <pre>{escaped_content}</pre>
             </div>'''
         elif file_content['type'] == 'raw_text':
             # Show raw text content
@@ -801,11 +804,12 @@ async def view_file(file: str = Query("")):
             if file_info.get('truncated'):
                 info_text += f" (showing first {file_info.get('max_bytes', 50000)} bytes)"
             
+            escaped_content = html.escape(file_content["content"])
             template_vars['content_html'] = f'''
             <div class="info">{info_text}</div>
             <div class="metadata">
                 <h3>File Content</h3>
-                <pre style="white-space: pre-wrap; word-wrap: break-word;">{file_content["content"]}</pre>
+                <pre style="white-space: pre-wrap; word-wrap: break-word;">{escaped_content}</pre>
             </div>'''
         elif file_content['type'] == 'raw_binary':
             # Show binary content as hex dump
@@ -835,7 +839,8 @@ async def view_file(file: str = Query("")):
                 table_html += '<tr>'
                 for col in file_content['columns']:
                     value = row.get(col, '')
-                    table_html += f'<td>{value if value is not None else ""}</td>'
+                    escaped_value = html.escape(str(value) if value is not None else "")
+                    table_html += f'<td>{escaped_value}</td>'
                 table_html += '</tr>'
             table_html += '</tbody></table></div>'
             
@@ -845,11 +850,14 @@ async def view_file(file: str = Query("")):
                 if file_content.get('metadata'):
                     table_html += f'<h3>Delta Table Metadata</h3><pre>{json.dumps(file_content["metadata"], indent=2)}</pre>'
                 if file_content.get('schema'):
-                    table_html += f'<h3>Schema</h3><pre>{file_content["schema"]}</pre>'
+                    escaped_schema = html.escape(file_content["schema"])
+                    table_html += f'<h3>Schema</h3><pre>{escaped_schema}</pre>'
                 if file_content.get('raw_json'):
-                    table_html += f'<h3>Raw JSON (sample)</h3><pre>{file_content["raw_json"]}</pre>'
+                    escaped_json = html.escape(file_content["raw_json"])
+                    table_html += f'<h3>Raw JSON (sample)</h3><pre>{escaped_json}</pre>'
                 if file_content.get('xml_info'):
-                    table_html += f'<h3>XML Structure Info</h3><pre>{json.dumps(file_content["xml_info"], indent=2)}</pre>'
+                    escaped_xml_info = html.escape(json.dumps(file_content["xml_info"], indent=2))
+                    table_html += f'<h3>XML Structure Info</h3><pre>{escaped_xml_info}</pre>'
                 table_html += '</div>'
             
             template_vars['content_html'] = table_html
@@ -916,7 +924,8 @@ async def view_delta(path: str = Query("")):
                 table_html += '<tr>'
                 for col in file_content['columns']:
                     value = row.get(col, '')
-                    table_html += f'<td>{value if value is not None else ""}</td>'
+                    escaped_value = html.escape(str(value) if value is not None else "")
+                    table_html += f'<td>{escaped_value}</td>'
                 table_html += '</tr>'
             table_html += '</tbody></table></div>'
             
