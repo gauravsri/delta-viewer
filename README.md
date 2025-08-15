@@ -26,6 +26,16 @@ A minimal SRE tool for browsing S3/MinIO storage and viewing data files with Del
 
 ## Configuration
 
+### Required S3 Permissions
+
+The application requires different S3 permissions based on features used:
+
+- **Read-only mode**: `s3:ListBucket`, `s3:GetObject` 
+- **File management**: Add `s3:PutObject`, `s3:DeleteObject`
+- **Full functionality**: All above permissions
+
+**Note**: Management controls automatically hide if you lack write/delete permissions.
+
 ### AWS S3 Configuration
 Set these environment variables in `.env`:
 
@@ -103,3 +113,5 @@ uvicorn delta_viewer:app --host 0.0.0.0 --port 5000 --reload
 - **Create Folder**: Button in the management bar to create new folders
 - **Delete Items**: 🗑️ buttons next to each file/folder for deletion
 - **Confirmations**: All delete operations require confirmation
+- **Permission-based UI**: Controls automatically hide if user lacks S3 permissions
+- **Graceful Errors**: Clear error messages for permission/access issues

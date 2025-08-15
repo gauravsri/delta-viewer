@@ -55,6 +55,45 @@ class S3Handler:
         )
         
         self.bucket_name = Config.S3_BUCKET_NAME
+        self._permissions_cache = {}
+        
+    def check_permissions(self) -> dict:
+        """Check what S3 permissions the current user has."""
+        if self._permissions_cache:
+            return self._permissions_cache
+            
+        permissions = {
+            'read': False,
+            'write': False,
+            'delete': False
+        }
+        
+        try:
+            # Test read permission
+            self.s3_client.head_bucket(Bucket=self.bucket_name)
+            permissions['read'] = True
+        except Exception as e:
+            logger.warning(f"No read permission: {e}")
+            
+        try:
+            # Test write permission by attempting to create a test object
+            test_key = '.delta-viewer-permission-test'
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=test_key,
+                Body=b'test'
+            )
+            permissions['write'] = True
+            
+            # Clean up test object and test delete permission
+            self.s3_client.delete_object(Bucket=self.bucket_name, Key=test_key)
+            permissions['delete'] = True
+            
+        except Exception as e:
+            logger.warning(f"No write/delete permission: {e}")
+            
+        self._permissions_cache = permissions
+        return permissions
 
     def list_objects(self, prefix: str = '') -> List[Dict[str, Any]]:
         """List objects in S3 bucket with given prefix."""
@@ -111,9 +150,17 @@ class S3Handler:
             self.s3_client.delete_object(Bucket=self.bucket_name, Key=key)
             logger.info(f"Deleted object: {key}")
             return True
+        except self.s3_client.exceptions.NoSuchKey:
+            logger.warning(f"Object not found: {key}")
+            raise FileNotFoundError(f"File not found: {key}")
         except Exception as e:
-            logger.error(f"Error deleting object {key}: {e}")
-            raise
+            error_code = getattr(e, 'response', {}).get('Error', {}).get('Code', '')
+            if error_code in ['AccessDenied', 'Forbidden']:
+                logger.error(f"Permission denied deleting {key}: {e}")
+                raise PermissionError(f"Permission denied: Cannot delete {key}")
+            else:
+                logger.error(f"Error deleting object {key}: {e}")
+                raise
 
     def delete_folder(self, prefix: str) -> int:
         """Delete all objects with the given prefix (folder)."""
@@ -131,18 +178,30 @@ class S3Handler:
             objects_to_delete = [{'Key': obj['Key']} for obj in response['Contents']]
             
             if objects_to_delete:
-                self.s3_client.delete_objects(
+                delete_response = self.s3_client.delete_objects(
                     Bucket=self.bucket_name,
                     Delete={'Objects': objects_to_delete}
                 )
+                
+                # Check for errors in batch delete
+                if 'Errors' in delete_response and delete_response['Errors']:
+                    errors = delete_response['Errors']
+                    failed_keys = [err['Key'] for err in errors]
+                    error_msg = f"Failed to delete some files: {failed_keys}"
+                    raise Exception(error_msg)
                 
             deleted_count = len(objects_to_delete)
             logger.info(f"Deleted {deleted_count} objects with prefix: {prefix}")
             return deleted_count
             
         except Exception as e:
-            logger.error(f"Error deleting folder {prefix}: {e}")
-            raise
+            error_code = getattr(e, 'response', {}).get('Error', {}).get('Code', '')
+            if error_code in ['AccessDenied', 'Forbidden']:
+                logger.error(f"Permission denied deleting folder {prefix}: {e}")
+                raise PermissionError(f"Permission denied: Cannot delete folder {prefix}")
+            else:
+                logger.error(f"Error deleting folder {prefix}: {e}")
+                raise
 
     def create_folder(self, folder_path: str) -> bool:
         """Create a folder by creating an empty object with trailing slash."""
@@ -162,8 +221,13 @@ class S3Handler:
             return True
             
         except Exception as e:
-            logger.error(f"Error creating folder {folder_path}: {e}")
-            raise
+            error_code = getattr(e, 'response', {}).get('Error', {}).get('Code', '')
+            if error_code in ['AccessDenied', 'Forbidden']:
+                logger.error(f"Permission denied creating folder {folder_path}: {e}")
+                raise PermissionError(f"Permission denied: Cannot create folder {folder_path}")
+            else:
+                logger.error(f"Error creating folder {folder_path}: {e}")
+                raise
 
 # File Viewers
 class FileViewers:
@@ -706,6 +770,54 @@ HTML_TEMPLATE = '''
     </div>
     
     <script>
+        let userPermissions = {{'read': false, 'write': false, 'delete': false}};
+        
+        // Check permissions on page load
+        document.addEventListener('DOMContentLoaded', async function() {{
+            try {{
+                const response = await fetch('/permissions');
+                const result = await response.json();
+                if (result.success) {{
+                    userPermissions = result.permissions;
+                    updateUIBasedOnPermissions();
+                }}
+            }} catch (error) {{
+                console.warn('Could not check permissions:', error);
+                hideManagementControls();
+            }}
+        }});
+        
+        function updateUIBasedOnPermissions() {{
+            // Hide create folder button if no write permission
+            const createBtn = document.querySelector('.btn-success');
+            if (createBtn && !userPermissions.write) {{
+                createBtn.style.display = 'none';
+            }}
+            
+            // Hide delete buttons if no delete permission
+            const deleteButtons = document.querySelectorAll('.btn-danger');
+            if (!userPermissions.delete) {{
+                deleteButtons.forEach(btn => {{
+                    btn.style.display = 'none';
+                }});
+            }}
+            
+            // Hide entire management controls if no write/delete permissions
+            if (!userPermissions.write && !userPermissions.delete) {{
+                const managementControls = document.querySelector('.management-controls');
+                if (managementControls) {{
+                    managementControls.style.display = 'none';
+                }}
+            }}
+        }}
+        
+        function hideManagementControls() {{
+            const managementControls = document.querySelector('.management-controls');
+            if (managementControls) {{
+                managementControls.style.display = 'none';
+            }}
+        }}
+        
         function viewDeltaTable(path) {{
             window.location.href = '/delta?path=' + encodeURIComponent(path);
         }}
@@ -739,7 +851,11 @@ HTML_TEMPLATE = '''
                     alert(result.message);
                     window.location.reload();
                 }} else {{
-                    alert('Error: ' + result.error);
+                    if (result.error_type === 'permission') {{
+                        alert('Permission denied: You do not have permission to create folders.');
+                    }} else {{
+                        alert('Error: ' + result.error);
+                    }}
                 }}
             }} catch (error) {{
                 alert('Error creating folder: ' + error.message);
@@ -762,7 +878,14 @@ HTML_TEMPLATE = '''
                     alert(result.message);
                     window.location.reload();
                 }} else {{
-                    alert('Error: ' + result.error);
+                    if (result.error_type === 'permission') {{
+                        alert('Permission denied: You do not have permission to delete items.');
+                    }} else if (result.error_type === 'not_found') {{
+                        alert('Item not found: It may have been already deleted.');
+                        window.location.reload();
+                    }} else {{
+                        alert('Error: ' + result.error);
+                    }}
                 }}
             }} catch (error) {{
                 alert('Error deleting ' + type + ': ' + error.message);
@@ -1112,18 +1235,44 @@ async def delete_item(path: str = Query(...), type: str = Query(...)):
             })
         else:
             raise HTTPException(status_code=400, detail="Type must be 'file' or 'folder'")
+    except PermissionError as e:
+        logger.error(f"Permission denied deleting {type} {path}: {e}")
+        return JSONResponse({
+            'success': False, 
+            'error': str(e),
+            'error_type': 'permission'
+        }, status_code=403)
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {path}")
+        return JSONResponse({
+            'success': False, 
+            'error': str(e),
+            'error_type': 'not_found'
+        }, status_code=404)
     except Exception as e:
         logger.error(f"Error deleting {type} {path}: {e}")
-        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+        return JSONResponse({
+            'success': False, 
+            'error': str(e),
+            'error_type': 'general'
+        }, status_code=500)
 
 @app.post("/create-folder")
 async def create_folder(path: str = Query(...), name: str = Query(...)):
     """Create a new folder."""
     try:
+        # Validate folder name
+        if not name or not name.strip():
+            return JSONResponse({
+                'success': False, 
+                'error': 'Folder name cannot be empty',
+                'error_type': 'validation'
+            }, status_code=400)
+        
         # Build full folder path
         if path and not path.endswith('/'):
             path += '/'
-        folder_path = f"{path}{name}/"
+        folder_path = f"{path}{name.strip()}/"
         
         s3_handler.create_folder(folder_path)
         return JSONResponse({
@@ -1131,9 +1280,37 @@ async def create_folder(path: str = Query(...), name: str = Query(...)):
             'message': f'Folder {name} created successfully',
             'path': folder_path
         })
+    except PermissionError as e:
+        logger.error(f"Permission denied creating folder {name}: {e}")
+        return JSONResponse({
+            'success': False, 
+            'error': str(e),
+            'error_type': 'permission'
+        }, status_code=403)
     except Exception as e:
         logger.error(f"Error creating folder {name} at {path}: {e}")
-        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+        return JSONResponse({
+            'success': False, 
+            'error': str(e),
+            'error_type': 'general'
+        }, status_code=500)
+
+@app.get("/permissions")
+async def check_permissions():
+    """Check current user's S3 permissions."""
+    try:
+        permissions = s3_handler.check_permissions()
+        return JSONResponse({
+            'success': True,
+            'permissions': permissions
+        })
+    except Exception as e:
+        logger.error(f"Error checking permissions: {e}")
+        return JSONResponse({
+            'success': False,
+            'permissions': {'read': False, 'write': False, 'delete': False},
+            'error': str(e)
+        })
 
 @app.get("/health")
 async def health_check():
